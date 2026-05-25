@@ -1,0 +1,11 @@
+{
+  "name": "worktree-flow",
+  "description": "Parallel-feature development: one worktree + one Apache port per feature, auto-managed via /wt-* commands. Designed for solo macOS PHP/web devs using local Apache.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Manuel Hendry",
+    "email": "manuel.hendry@gmail.com"
+  },
+  "license": "MIT",
+  "keywords": ["git", "worktree", "apache", "php", "solo-dev", "parallel-features", "workflow"]
+}
