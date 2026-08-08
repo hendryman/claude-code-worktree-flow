@@ -33,7 +33,14 @@ fi
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
-# Must be in the main checkout, not a worktree
+# Must be in the main checkout, not a worktree.
+#
+# Compare the two git dirs RESOLVED, not as git happens to print them. From the repo root both answer
+# `.git` and this passes; from any SUBDIRECTORY of the main checkout --git-dir answers absolute and
+# --git-common-dir answers relative (`../../.git`), so the strings differ while the directories do not
+# and the guard refused a perfectly valid main checkout. `cd` into REPO_ROOT first — it is already
+# computed above, and every path this script writes is relative to it anyway.
+cd "$REPO_ROOT" || { echo "ERROR: cannot enter repo root $REPO_ROOT" >&2; exit 2; }
 if [[ "$(git rev-parse --git-common-dir)" != "$(git rev-parse --git-dir)" ]]; then
     echo "ERROR: run /wt-create from the main checkout, not from inside a worktree" >&2
     exit 2
