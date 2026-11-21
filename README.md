@@ -127,10 +127,13 @@ Each repo gets `.worktrees/state.json` (gitignored — and `xattr`-marked Dropbo
 
 ## The worktree-vs-base gate
 
-The plugin's `branch-guard` (PreToolUse `Edit|Write|MultiEdit|NotebookEdit`) and `plan-exec-guard` (PreToolUse `ExitPlanMode`) hooks intercept work that would otherwise land on `main` in the main checkout. The hook denies the action with a `reason` that instructs Claude to ask the user via `AskUserQuestion`:
+The plugin's `branch-guard` (PreToolUse `Edit|Write|MultiEdit|NotebookEdit`) and `plan-exec-guard` (PreToolUse `ExitPlanMode`) hooks intercept work that would otherwise land on `main` in the main checkout. The hook denies the action with a `reason` that instructs Claude to ask the user one `AskUserQuestion`, "Worktree slug for `<repo>`, or stay on `<base>`?", with the options in this order:
 
-- **Worktree** → run `feature-create.sh` + `apache-start.sh` for an isolated worktree
-- **On `<base>`** → `touch /tmp/claude-wtf-plan-exec-ok-<repo-hash>` (5-min TTL) and retry
+- **Use `<base>`** → `touch /tmp/claude-wtf-plan-exec-ok-<repo-hash>` (5-min TTL) and retry
+- **a slug Claude suggests** from the feature intent → run `feature-create.sh` + `apache-start.sh` for an isolated worktree
+- **the free-text field** → the user's own slug, same as above (an existing slug resumes that worktree)
+
+There is no second slug question, so picking `<base>` never shows one.
 
 Once the session works in a worktree of the repo, the gate stops asking for that repo. This covers a worktree made or resumed by `/wt-create`, by `/wt-resume`, or by a "Worktree" answer to the gate. The session's cwd stays in the main checkout, so:
 

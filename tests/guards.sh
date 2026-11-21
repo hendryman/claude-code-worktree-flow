@@ -27,8 +27,11 @@ run_plan()   { (cd "$1" && plan_json "$2" | env -u TERM_SESSION_ID ITERM_SESSION
 decision() { printf '%s' "$1" | jq -r '.hookSpecificOutput.permissionDecision // (if .hookSpecificOutput.additionalContext then "context" else "none" end)' 2>/dev/null || echo none; }
 
 echo "== before any worktree"
+one_question() { [[ "$1" == *"Worktree slug for \`repo-a\`, or stay on \`main\`?"* && "$1" == *'\"Use main\" — '*'\"<slug>\"'* && "$1" != *'Slug?'* && "$1" != *'\"Use plan filename\"'* ]]; }
 out=$(run_branch "$T/repo-a/app.php" S1 P1 S1); [[ $(decision "$out") == deny && "$out" == *"INVOKE AskUserQuestion"* ]] && ok "edit on main asks" || bad "edit on main asks" "$out"
+one_question "$out" && ok "edit gate: one slug question, Use main first" || bad "edit gate: one slug question" "$out"
 out=$(run_plan "$T/repo-a" S1 P1 S1);          [[ $(decision "$out") == deny && "$out" == *"INVOKE AskUserQuestion"* ]] && ok "plan exit asks" || bad "plan exit asks" "$out"
+one_question "$out" && ok "plan gate: one slug question, Use main first" || bad "plan gate: one slug question" "$out"
 [[ "$out" == *"(cd \\\"$T/repo-a\\\" && bash \\\"$PLUGIN/scripts/feature-create.sh\\\" <slug>)"* ]] && ok "ask text has resolved create command" || bad "ask text has resolved create command" "$out"
 
 echo "== session S1 (pane P1) creates worktree feat-x in repo-a"
@@ -51,7 +54,7 @@ out=$(run_branch "$T/repo-a/app.php" S2 P2 S2); [[ "$out" == *"INVOKE AskUserQue
 out=$(run_plan "$T/repo-a" S2 P2 S2);          [[ "$out" == *"INVOKE AskUserQuestion"* ]] && ok "other session plan exit still asked" || bad "other session plan asked" "$out"
 
 echo "== second repo: asked on its own, once"
-out=$(run_branch "$T/repo-b/app.php" S1 P1 S1); [[ "$out" == *"INVOKE AskUserQuestion"* && "$out" == *"worktree of \`repo-b\`"* && "$out" == *"(cd \\\"$T/repo-b\\\""* ]] && ok "repo-b asks, names repo-b, cds into it" || bad "repo-b asks" "$out"
+out=$(run_branch "$T/repo-b/app.php" S1 P1 S1); [[ "$out" == *"INVOKE AskUserQuestion"* && "$out" == *"Worktree slug for \`repo-b\`"* &&"$out" == *"(cd \\\"$T/repo-b\\\""* ]] && ok "repo-b asks, names repo-b, cds into it" || bad "repo-b asks" "$out"
 (cd "$T/repo-b" && env -u TERM_SESSION_ID ITERM_SESSION_ID=P1 CLAUDE_CODE_SESSION_ID=S1 "$SH" "$PLUGIN/scripts/feature-create.sh" feat-x >/dev/null 2>&1)
 out=$(run_branch "$T/repo-b/app.php" S1 P1 S1); [[ "$out" == *"repo-b/.worktrees/feat-x/app.php"* && "$out" != *"AskUserQuestion"* ]] && ok "repo-b redirected after its worktree exists" || bad "repo-b redirect" "$out"
 

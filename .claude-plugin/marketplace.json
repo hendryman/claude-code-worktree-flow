@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Parallel-feature development: one worktree + one Apache port per feature, auto-managed via /wt-* commands",
-    "version": "1.1.0"
+    "version": "1.2.0"
   },
   "plugins": [
     {

@@ -124,48 +124,37 @@ EOF
 )"
 fi
 
-# Suggest a slug from the newest plan file (used in the AskUserQuestion contract).
-SUGGESTED_SLUG="<short-slug>"
-PLANS_DIR="$HOME/.claude/plans"
-if [[ -d "$PLANS_DIR" ]]; then
-    newest=$(ls -t "$PLANS_DIR"/*.md 2>/dev/null | head -1 || true)
-    [[ -n "$newest" ]] && SUGGESTED_SLUG=$(basename "$newest" .md)
-fi
-
 REPO_NAME=$(basename "$REPO_ROOT")
 
 # Reason text inlines the AskUserQuestion phrasing contract so the plugin does
 # not depend on user-installed rule files.
 deny "$(cat <<EOF
-On $BASE_BRANCH in main checkout of $REPO_NAME. INVOKE AskUserQuestion NOW (no prose, no paraphrase):
+On $BASE_BRANCH in main checkout of $REPO_NAME. INVOKE AskUserQuestion NOW with this ONE
+question (no prose, no paraphrase). It is the only worktree question: never ask a
+separate slug question, before or after it.
 
-  header   = "Worktree?"
-  question = "Implement in a new worktree of \`$REPO_NAME\`, or directly on \`$BASE_BRANCH\`?"
-  options  = [
-    "Worktree"        — create a new worktree, implement isolated.
-    "On $BASE_BRANCH" — proceed directly on the main checkout.
+  header   = "Worktree"
+  question = "Worktree slug for \`$REPO_NAME\`, or stay on \`$BASE_BRANCH\`?"
+  options  = [   (exactly these two, in this order)
+    "Use $BASE_BRANCH" — proceed directly on the main checkout.
+    "<slug>"     — a short 2-4 word kebab-case slug YOU derive from the feature
+                   intent; its description says what the worktree is for.
   ]
 
-On "Worktree": confirm a short 2-4 word kebab-case slug derived from feature
-intent (NOT from a long plan filename). Ask again:
+The question's built-in free-text field is where the user types their own slug.
+Do not add a "Let me type one" or a plan-filename option.
 
-  header   = "Slug?"
-  question = "Use \`$SUGGESTED_SLUG\` as the worktree slug?"
-  options  = [
-    "$SUGGESTED_SLUG" — use this short slug.
-    "Use plan filename" — fall back to the plan file basename.
-    "Let me type one"   — user supplies one next turn.
-  ]
+On "Use $BASE_BRANCH" (or "$BASE_BRANCH" typed in the field): touch $ESCAPE
+(5-min TTL) then retry this edit.
 
-Then run (normalize slug to lowercase kebab-case first):
+On a slug, suggested or typed (normalize to lowercase kebab-case), run:
   (cd "$REPO_ROOT" && bash "$PLUGIN_ROOT/scripts/feature-create.sh" <slug>)
   (cd "$REPO_ROOT" && bash "$PLUGIN_ROOT/scripts/apache-start.sh" <slug>)
+A typed slug that names an existing worktree resumes it.
 
 All subsequent Edit/Write calls for this repo MUST target absolute paths under
 $REPO_ROOT/.worktrees/<slug>/... — cwd cannot change mid-session. The gate
 does not ask again for this repo while the session works in that worktree.
-
-On "On $BASE_BRANCH": touch $ESCAPE  (5-min TTL) then retry this edit.
 
 SKIP RULE: If the user already gave a direct imperative + concrete file path
 (e.g. "Remove line 42 of foo.sh"), proceed without re-asking — the explicit
