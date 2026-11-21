@@ -98,9 +98,8 @@ if state_has "$SLUG"; then
 
     bash "$SCRIPT_DIR/htaccess-disable-auth.sh" "$EX_ABS" || true
 
-    # Markers: let plan-mode gates yield; statusline reads state.active_slug.
-    REPO_HASH=$(printf '%s' "$REPO_ROOT" | md5 -q 2>/dev/null || printf '%s' "$REPO_ROOT" | md5sum | cut -d' ' -f1)
-    touch "/tmp/claude-wtf-plan-exec-ok-$REPO_HASH"
+    # The session pointer is what makes the guards and the statusline treat
+    # this session as working in the worktree from now on.
     state_set_active_slug "$SLUG"
 
     exit 0
@@ -214,8 +213,6 @@ echo "════════════════════════�
 echo ""
 echo "Next: cd $WT_REL && /wt-apache"
 
-# Markers: let plan-mode gates yield (plan-file-gate + plan-exec-guard both
-# read /tmp/claude-wtf-plan-exec-ok-<hash>). Active-slug lives in state.json.
-REPO_HASH=$(printf '%s' "$REPO_ROOT" | md5 -q 2>/dev/null || printf '%s' "$REPO_ROOT" | md5sum | cut -d' ' -f1)
-touch "/tmp/claude-wtf-plan-exec-ok-$REPO_HASH"
+# The session pointer is what makes the guards and the statusline treat this
+# session as working in the worktree from now on.
 state_set_active_slug "$SLUG"

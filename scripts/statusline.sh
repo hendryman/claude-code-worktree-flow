@@ -128,14 +128,20 @@ if [[ -f "$STATE_FILE" ]]; then
     else
         # Tier 2: per-session bucket. cwd is main checkout but a worktree is
         # logically active for THIS Claude session (chosen via plan-mode gate
-        # or /wt-create). Pointer at state.sessions[<tsid>].active_slug,
-        # where <tsid> = ITERM_SESSION_ID (or TERM_SESSION_ID). The bucket is
-        # cleared on every SessionStart:startup so a fresh Claude session
-        # always begins with a blank worktree pointer — the "current
-        # worktree" is a property of the Claude session, NOT repo-level
-        # persistent state.
+        # or /wt-create). Pointer at state.sessions["claude:<session-id>"],
+        # else state.sessions[<tsid>] where <tsid> = ITERM_SESSION_ID (or
+        # TERM_SESSION_ID). The pane bucket is cleared on every
+        # SessionStart:startup so a fresh Claude session always begins with a
+        # blank worktree pointer — the "current worktree" is a property of the
+        # Claude session, NOT repo-level persistent state.
         tsid="${ITERM_SESSION_ID:-${TERM_SESSION_ID:-_default}}"
-        maybe=$(jq -r --arg tsid "$tsid" '.sessions[$tsid].active_slug // empty' "$STATE_FILE" 2>/dev/null)
+        maybe=""
+        if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
+            maybe=$(jq -r --arg k "claude:$CLAUDE_SESSION_ID" '.sessions[$k].active_slug // empty' "$STATE_FILE" 2>/dev/null)
+        fi
+        if [[ -z "$maybe" ]]; then
+            maybe=$(jq -r --arg tsid "$tsid" '.sessions[$tsid].active_slug // empty' "$STATE_FILE" 2>/dev/null)
+        fi
         if [[ -n "$maybe" ]]; then
             ok=$(jq -r --arg s "$maybe" '
                 .features[$s] as $f

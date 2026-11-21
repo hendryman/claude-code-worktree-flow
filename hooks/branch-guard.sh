@@ -1,16 +1,22 @@
 #!/bin/bash
 # branch-guard.sh — PreToolUse hook for Edit|Write|MultiEdit|NotebookEdit.
 #
-# Hard gate: denies the first file-writing tool call when ALL of these are true:
-#   1. Target file is inside a git repo
-#   2. Current branch is the repo's base_branch (default "main")
-#   3. We're in the MAIN checkout (not a worktree)
-#   4. Target file is NOT a meta file (.claude/**, CLAUDE.md, .gitignore, README.md, ~/.claude/**)
-#   5. Escape marker /tmp/claude-wtf-plan-exec-ok-<repo-hash> is absent or stale (>5min)
+# Gates file writes into the MAIN checkout of a repo that is on its base_branch
+# (default "main"). Lets the write through when:
+#   • the target is not in a git repo, is inside a worktree, or the repo is on
+#     another branch
+#   • the target is a meta file (.claude/**, CLAUDE.md, .gitignore, README.md,
+#     ~/.claude/**)
+#   • the escape marker /tmp/claude-wtf-plan-exec-ok-<repo-hash> is fresh
+#     (<5 min): the user chose "On <base>"
+#   • this Claude session already works in a worktree of the repo and the
+#     target is gitignored, so it can never land in a commit on <base>
 #
-# Reason tells the assistant to ASK worktree-vs-base via AskUserQuestion.
-# Escape hatch: user says "proceed on <base> anyway" → assistant touches the marker
-# and retries. Marker is consumed (deleted) on the pass that honors it.
+# Otherwise it denies:
+#   • session already works in a worktree of this repo → the reason names the
+#     same file inside that worktree. No question.
+#   • no worktree of this repo yet → the reason tells the assistant to ASK
+#     worktree-vs-base via AskUserQuestion. Each repo is asked on its own.
 #
 # Reads Claude Code's tool_use JSON on stdin.
 
@@ -19,6 +25,8 @@ set -eu
 INPUT=$(cat 2>/dev/null || echo '{}')
 TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null || echo "")
 FILE_PATH=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null || echo "")
+SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null || echo "")
+PLUGIN_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
 case "$TOOL_NAME" in
     Edit|Write|MultiEdit|NotebookEdit) ;;
@@ -62,6 +70,17 @@ CURRENT=$(git -C "$REPO_ROOT" symbolic-ref --short HEAD 2>/dev/null || echo "")
 # Non-base branch → deliberate, let through.
 [[ "$CURRENT" != "$BASE_BRANCH" ]] && exit 0
 
+deny() {
+    jq -n --arg reason "$1" '{
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: $reason
+      }
+    }'
+    exit 0
+}
+
 md5_of() {
     if command -v md5 >/dev/null 2>&1; then
         printf '%s' "$1" | md5 -q
@@ -84,6 +103,27 @@ if [[ -f "$ESCAPE" ]]; then
     fi
 fi
 
+# shellcheck source=../lib/worktree-state.sh
+source "$PLUGIN_ROOT/lib/worktree-state.sh"
+SESSION_WT=$(state_session_worktree "$REPO_ROOT/.worktrees/state.json" "$SESSION_ID" "${CLAUDE_CODE_SESSION_ID:-}")
+if [[ -n "$SESSION_WT" ]]; then
+    WT_SLUG=${SESSION_WT%%$'\t'*}
+    WT_ABS=${SESSION_WT#*$'\t'}
+    FILE_NAME=$(basename "$FILE_PATH")
+    git -C "$TARGET_DIR" check-ignore -q -- "$FILE_NAME" 2>/dev/null && exit 0
+    REL_PATH="$(git -C "$TARGET_DIR" rev-parse --show-prefix 2>/dev/null || true)$FILE_NAME"
+    deny "$(cat <<EOF
+This session already works in worktree \`$WT_SLUG\` of this repo. Do not ask
+Worktree vs $BASE_BRANCH. Make this change in the worktree copy instead:
+
+  $WT_ABS/$REL_PATH
+
+Read that file first (it can differ from the main checkout), then retry there.
+All further edits in this repo go under $WT_ABS/.
+EOF
+)"
+fi
+
 # Suggest a slug from the newest plan file (used in the AskUserQuestion contract).
 SUGGESTED_SLUG="<short-slug>"
 PLANS_DIR="$HOME/.claude/plans"
@@ -92,13 +132,15 @@ if [[ -d "$PLANS_DIR" ]]; then
     [[ -n "$newest" ]] && SUGGESTED_SLUG=$(basename "$newest" .md)
 fi
 
+REPO_NAME=$(basename "$REPO_ROOT")
+
 # Reason text inlines the AskUserQuestion phrasing contract so the plugin does
 # not depend on user-installed rule files.
-REASON=$(cat <<EOF
-On $BASE_BRANCH in main checkout. INVOKE AskUserQuestion NOW (no prose, no paraphrase):
+deny "$(cat <<EOF
+On $BASE_BRANCH in main checkout of $REPO_NAME. INVOKE AskUserQuestion NOW (no prose, no paraphrase):
 
   header   = "Worktree?"
-  question = "Implement in a new worktree, or directly on \`$BASE_BRANCH\`?"
+  question = "Implement in a new worktree of \`$REPO_NAME\`, or directly on \`$BASE_BRANCH\`?"
   options  = [
     "Worktree"        — create a new worktree, implement isolated.
     "On $BASE_BRANCH" — proceed directly on the main checkout.
@@ -116,11 +158,12 @@ intent (NOT from a long plan filename). Ask again:
   ]
 
 Then run (normalize slug to lowercase kebab-case first):
-  bash \${CLAUDE_PLUGIN_ROOT}/scripts/feature-create.sh <slug>
-  bash \${CLAUDE_PLUGIN_ROOT}/scripts/apache-start.sh <slug>
+  (cd "$REPO_ROOT" && bash "$PLUGIN_ROOT/scripts/feature-create.sh" <slug>)
+  (cd "$REPO_ROOT" && bash "$PLUGIN_ROOT/scripts/apache-start.sh" <slug>)
 
-All subsequent Edit/Write calls MUST target absolute paths under
-<repo>/.worktrees/<slug>/... — cwd cannot change mid-session.
+All subsequent Edit/Write calls for this repo MUST target absolute paths under
+$REPO_ROOT/.worktrees/<slug>/... — cwd cannot change mid-session. The gate
+does not ask again for this repo while the session works in that worktree.
 
 On "On $BASE_BRANCH": touch $ESCAPE  (5-min TTL) then retry this edit.
 
@@ -128,14 +171,4 @@ SKIP RULE: If the user already gave a direct imperative + concrete file path
 (e.g. "Remove line 42 of foo.sh"), proceed without re-asking — the explicit
 instruction IS the approval.
 EOF
-)
-
-jq -n --arg reason "$REASON" '{
-  hookSpecificOutput: {
-    hookEventName: "PreToolUse",
-    permissionDecision: "deny",
-    permissionDecisionReason: $reason
-  }
-}'
-
-exit 0
+)"

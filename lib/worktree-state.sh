@@ -198,6 +198,10 @@ state_reconcile_apache() {
 # Entry shape:
 #   .sessions["<tsid>"] = { "active_slug": "<slug>", "last_seen": "<iso>" }
 #
+# When Claude Code exports CLAUDE_CODE_SESSION_ID, the same pointer is also
+# written under "claude:<session-id>". The pane key survives /clear; the
+# Claude key survives /resume in another pane. The guards read both.
+#
 # Each session writes only its own bucket. Reconciliation prunes buckets
 # whose `last_seen` is older than 7 days or whose active_slug points at a
 # stale/removed feature.
@@ -218,17 +222,55 @@ state_set_active_slug() {
     # "current worktree" is a session property, NOT repo-level persistent
     # state. There is intentionally no repo-wide fallback — that would
     # leak an old session's worktree pointer into a new session.
-    local slug="$1" f tmp ts tsid
+    local slug="$1" f tmp ts tsid cid=""
     tsid=$(state_tsid)
+    if [[ -n "${CLAUDE_CODE_SESSION_ID:-}" ]]; then
+        cid="claude:$CLAUDE_CODE_SESSION_ID"
+    fi
     f=$(state_file)
     tmp="${f}.tmp.$$"
     ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    jq --arg tsid "$tsid" --arg s "$slug" --arg t "$ts" '
+    jq --arg tsid "$tsid" --arg cid "$cid" --arg s "$slug" --arg t "$ts" '
         (.sessions //= {})
         | .sessions[$tsid] = {active_slug: $s, last_seen: $t}
+        | if $cid != "" then .sessions[$cid] = {active_slug: $s, last_seen: $t} else . end
         | del(.current_active_slug)
     ' "$f" > "$tmp"
     mv "$tmp" "$f"
+}
+
+# The worktree a Claude session works in, for the repo that owns <state_file>.
+# Prints "<slug>\t<abs_path>", or nothing. Claude session ids are tried first.
+# The pane key is skipped when it is "_default" and an id is known: every
+# session outside iTerm/Terminal shares that bucket, so it would hand one
+# session another session's worktree.
+# Usage: state_session_worktree <state_file> [<claude_session_id>...]
+state_session_worktree() {
+    local f="$1" keys="" id key hit tsid
+    shift
+    [[ -f "$f" ]] || return 0
+    for id in "$@"; do
+        if [[ -n "$id" ]]; then
+            keys="$keys claude:$id"
+        fi
+    done
+    tsid=$(state_tsid)
+    if [[ "$tsid" != "_default" || -z "$keys" ]]; then
+        keys="$keys $tsid"
+    fi
+    for key in $keys; do
+        hit=$(jq -r --arg k "$key" '
+            (.sessions[$k].active_slug // empty) as $s
+            | .features[$s] // empty
+            | select((.status // "active") == "active")
+            | "\($s)\t\(.abs_path)"
+        ' "$f" 2>/dev/null || true)
+        if [[ -n "$hit" && -d "${hit#*$'\t'}" ]]; then
+            printf '%s\n' "$hit"
+            return 0
+        fi
+    done
+    return 0
 }
 
 state_touch_session() {

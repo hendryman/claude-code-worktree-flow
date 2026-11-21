@@ -114,6 +114,10 @@ Each repo gets `.worktrees/state.json` (gitignored — and `xattr`-marked Dropbo
     "<terminal-session-id>": {
       "active_slug": "<slug>",
       "last_seen": "2026-05-25T10:00:00Z"
+    },
+    "claude:<claude-session-id>": {
+      "active_slug": "<slug>",
+      "last_seen": "2026-05-25T10:00:00Z"
     }
   },
   "port_range": [8100, 8199],
@@ -127,6 +131,14 @@ The plugin's `branch-guard` (PreToolUse `Edit|Write|MultiEdit|NotebookEdit`) and
 
 - **Worktree** → run `feature-create.sh` + `apache-start.sh` for an isolated worktree
 - **On `<base>`** → `touch /tmp/claude-wtf-plan-exec-ok-<repo-hash>` (5-min TTL) and retry
+
+Once the session works in a worktree of the repo, the gate stops asking for that repo. This covers a worktree made or resumed by `/wt-create`, by `/wt-resume`, or by a "Worktree" answer to the gate. The session's cwd stays in the main checkout, so:
+
+- `ExitPlanMode` passes, with a note that names the worktree.
+- An edit aimed at the main checkout is denied, and the reason gives the same file's path inside the worktree. There is no question.
+- Gitignored files in the main checkout pass, because they never reach a commit.
+
+Each repo is gated on its own. If the session edits a second repo that has no worktree, the gate asks there once, and a "Worktree" answer covers that repo from then on. The session is recognised by its Claude session id, which survives `/resume` in another pane, and by its terminal pane, which survives `/clear`. Both pointers live in `sessions` in `state.json`.
 
 Meta-file edits (`.claude/**`, `CLAUDE.md`, `.gitignore`, `README.md`, anything under `~/.claude/**`) skip the gate.
 
@@ -202,4 +214,4 @@ If you added a `statusLine` entry to `~/.claude/settings.json` during install, r
 
 ## Version
 
-1.0.0
+1.1.0
